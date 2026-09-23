@@ -71,8 +71,9 @@ MCP clients · memory_system · RAG/
 
 ```text
 Lawver/
-├── agent.py                 # Root entry: python agent.py / uvicorn agent:app
+├── agent.py                 # Root entry shim: python agent.py / uvicorn agent:app
 ├── backend/                 # FastAPI backend and agent runtime
+│   ├── agent.py             # Original entry moved here (prefer the root shim day-to-day)
 │   ├── app_factory.py
 │   ├── routes/
 │   ├── services/
@@ -82,8 +83,10 @@ Lawver/
 │   ├── mcp/
 │   ├── memory_system/
 │   ├── prompts/lawver/
+│   ├── prompt_loader.py
 │   ├── llm/
-│   └── ocp.py
+│   ├── ocp.py
+│   └── workspace.py
 ├── frontend/                # React 19 + Vite frontend
 │   ├── src/
 │   ├── public/
@@ -95,7 +98,10 @@ Lawver/
 ├── docs/
 ├── scripts/
 ├── tests/
+├── assets/
+├── data/                    # Runtime data (auth DB, workspaces; do not commit secrets)
 ├── package.json
+├── vite.config.ts           # Vite: root=frontend/, outDir=repo-root dist/
 ├── pyproject.toml
 └── dist/                    # Frontend build output (gitignored)
 ```
@@ -104,7 +110,8 @@ Important paths:
 
 | Path | Purpose |
 | --- | --- |
-| `agent.py` | Root entry that adds `backend/` to the path and creates the app; honors `PORT` and `UVICORN_WORKERS` |
+| `agent.py` | Root shim that adds `backend/` to the path and creates the app; honors `PORT` and `UVICORN_WORKERS` |
+| `backend/agent.py` | Pre-split entry moved under `backend/`; prefer the root shim for day-to-day starts |
 | `backend/app_factory.py` | FastAPI application factory: middleware, routes, and lifespan tasks |
 | `backend/routes/` | HTTP routes: auth, admin, chat, moot court, workspace, SPA fallback |
 | `backend/services/` | Chat and court pipelines, history compression, memory coordination, law cache, workspace cleanup |
@@ -113,9 +120,11 @@ Important paths:
 | `backend/mcps.py` | Unified business tool forwarding entrypoint |
 | `backend/mcp/` | Legal, company, PDF, Word, TXT/Markdown, memory, and SearXNG clients |
 | `backend/memory_system/` | Conversation-level structured memory service |
+| `backend/prompt_loader.py` | Dynamic system-prompt assembly |
 | `RAG/` | Local statute engine and ASEAN civil / islamic / common-law jurisdiction DBs |
 | `backend/prompts/lawver/` | Dynamic prompt resources: core / modes / focus / tasks / court |
 | `frontend/src/` | React frontend covering main chat and moot court |
+| `vite.config.ts` | Vite config: source root `frontend/`, build output root `dist/` |
 | `tests/` | Coverage of memory, OCP, tool loop, moot court, security hardening, and more |
 | `deploy/` | Production reverse-proxy and gateway examples |
 | `infra/` | Shared infra still at repo root: auth store, password hashing, Redis / bloom filter |
@@ -127,23 +136,24 @@ The repo is split into `backend/` (Python) and `frontend/` (React). If you still
 **Three lookup rules:**
 
 1. Former root-level backend Python packages/files → moved under `backend/` with the same relative path.  
-   Example: `mcp/searxng_client.py` → `backend/mcp/searxng_client.py`; `services/chat_pipeline.py` → `backend/services/chat_pipeline.py`.
+   Example: `mcp/searxng_client.py` → `backend/mcp/searxng_client.py`; `services/chat_pipeline.py` → `backend/services/chat_pipeline.py`; original `agent.py` → `backend/agent.py`.
 2. Former frontend `src/`, `public/`, and `index.html` → moved under `frontend/`.  
    Example: `src/hooks/useChat.ts` → `frontend/src/hooks/useChat.ts`; `public/sw.js` → `frontend/public/sw.js`.
-3. These **stayed at the repository root**: `agent.py` (entrypoint), `infra/`, `RAG/`, `tests/`, `scripts/`, `docs/`, `deploy/`, `android/`, `assets/`, `package.json`, `vite.config.ts`, `pyproject.toml`, `.env` / `.env_example`.
+3. These **stayed at the repository root** (not moved into backend/frontend): `infra/`, `RAG/`, `tests/`, `scripts/`, `docs/`, `deploy/`, `android/`, `assets/`, `data/`, `package.json`, `vite.config.ts`, `capacitor.config.ts`, `pyproject.toml`, `.env` / `.env_example`. In addition, a **new** root `agent.py` shim was added; use it for day-to-day starts and keep cwd at the repo root.
 
 **Common path mapping:**
 
 | Before (old) | After (new) | Notes |
 | --- | --- | --- |
-| `agent.py` | `agent.py` (repo root) | Entrypoint stays at root; forwards into `backend/` |
+| `agent.py` | `backend/agent.py` + new root `agent.py` | Original entry moved; root shim keeps `python agent.py` / `uvicorn agent:app` |
 | `app_factory.py` | `backend/app_factory.py` | FastAPI application factory |
-| `app_config.py` | `backend/app_config.py` | Backend config |
-| `auth.py` / `hash.py` | `backend/auth.py` / `backend/hash.py` | Auth and password-hash CLI |
+| `app_config.py` | `backend/app_config.py` | Reads `appConfig` from root `package.json` |
+| `auth.py` / `hash.py` | `backend/auth.py` / `backend/hash.py` | Auth and password-hash CLI (`hash.py` needs `PYTHONPATH=.` at repo root) |
 | `function_calling.py` | `backend/function_calling.py` | Model call wrapper |
+| `prompt_loader.py` | `backend/prompt_loader.py` | Dynamic prompt assembly |
 | `mcps.py` | `backend/mcps.py` | Tool forwarding entry |
 | `schemas.py` | `backend/schemas.py` | Request models |
-| `workspace.py` / `media.py` / `context_usage.py` / `ocp.py` | Same names under `backend/` | Workspace, media, context usage, output review |
+| `workspace.py` / `media.py` / `context_usage.py` / `ocp.py` / `output_sanitizer.py` | Same names under `backend/` | Workspace, media, context usage, output review / sanitize |
 | `agents/` | `backend/agents/` | ToolLoop agent |
 | `routes/` | `backend/routes/` | HTTP routes |
 | `services/` | `backend/services/` | Chat / court / memory pipelines |
@@ -158,6 +168,8 @@ The repo is split into `backend/` (Python) and `frontend/` (React). If you still
 | `infra/` | `infra/` (root, unchanged) | Do not look under `backend/infra/` |
 | `RAG/` | `RAG/` (root, unchanged) | Local statute DBs |
 | `tests/` | `tests/` (root, unchanged) | Still run `python -m pytest` from repo root |
+| `scripts/` / `docs/` / `deploy/` / `android/` / `assets/` | Same names at root | Not moved into backend/frontend |
+| `vite.config.ts` | `vite.config.ts` (root) | `root` → `frontend/`, `outDir` still repo-root `dist/` |
 | `dist/` | `dist/` (repo root) | Frontend build still emits to root `dist/` for the FastAPI SPA |
 
 **Find by filename (from repo root):**
@@ -293,7 +305,7 @@ This architecture work does not include Lawver naming cleanup, tool naming rewri
 Every request is accepted and forwarded through exactly two routers; cross-module direct calls are forbidden:
 
 ```text
-backend/routes/  ->  backend/services/  ->  services/agent_builder.py (paradigm router)
+backend/routes/  ->  backend/services/  ->  backend/services/agent_builder.py (paradigm router)
                                  |-- execute_tool  = mcps.use_tools(..., capability)
                                  |-- output_review = services/ocp_service.build_output_review(...)
                                           |

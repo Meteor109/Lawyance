@@ -71,8 +71,9 @@ MCP clients · memory_system · RAG/
 
 ```text
 Lawver/
-├── agent.py                 # ルート起動契約：python agent.py / uvicorn agent:app
+├── agent.py                 # ルート起動 shim：python agent.py / uvicorn agent:app
 ├── backend/                 # FastAPI バックエンドと Agent ランタイム
+│   ├── agent.py             # ルートから移した旧入口（日常はルート shim を使う）
 │   ├── app_factory.py
 │   ├── routes/
 │   ├── services/
@@ -82,8 +83,10 @@ Lawver/
 │   ├── mcp/
 │   ├── memory_system/
 │   ├── prompts/lawver/
+│   ├── prompt_loader.py
 │   ├── llm/
-│   └── ocp.py
+│   ├── ocp.py
+│   └── workspace.py
 ├── frontend/                # React 19 + Vite フロントエンド
 │   ├── src/
 │   ├── public/
@@ -95,7 +98,10 @@ Lawver/
 ├── docs/
 ├── scripts/
 ├── tests/
+├── assets/
+├── data/                    # 実行時データ（認証 DB、ワークスペースなど）
 ├── package.json
+├── vite.config.ts           # Vite：root=frontend/、outDir=ルート dist/
 ├── pyproject.toml
 └── dist/                    # フロントエンドビルド成果物（gitignore）
 ```
@@ -104,7 +110,8 @@ Lawver/
 
 | Path | 説明 |
 | --- | --- |
-| `agent.py` | ルート入口。`backend/` を path に追加してアプリを作成。`PORT` / `UVICORN_WORKERS` 対応 |
+| `agent.py` | ルート shim。`backend/` を path に追加してアプリを作成。`PORT` / `UVICORN_WORKERS` 対応 |
+| `backend/agent.py` | 分割時にルートから移した旧入口。日常起動はルート shim を使う |
 | `backend/app_factory.py` | FastAPI アプリケーションファクトリ |
 | `backend/routes/` | 認証、管理者、チャット、模擬法廷、ワークスペース、SPA フォールバック |
 | `backend/services/` | チャットと法廷のパイプライン、履歴圧縮、記憶調整、法令キャッシュなど |
@@ -113,9 +120,11 @@ Lawver/
 | `backend/mcps.py` | 業務ツールの統一転送エントリーポイント |
 | `backend/mcp/` | 法律、企業、PDF、Word、記憶、SearXNG などのクライアント |
 | `backend/memory_system/` | 会話単位の構造化記憶サービス |
+| `backend/prompt_loader.py` | 動的システム prompt の組み立て |
 | `RAG/` | ローカル法令検索と ASEAN civil / islamic / common-law 管轄庫 |
 | `backend/prompts/lawver/` | core / modes / focus / tasks / court の動的 prompt |
 | `frontend/src/` | React フロントエンド（メインチャットと模擬法廷） |
+| `vite.config.ts` | Vite 設定：ソース根は `frontend/`、成果物はルート `dist/` |
 | `tests/` | 記憶、OCP、ツールループ、模擬法廷、セキュリティなどを網羅 |
 | `deploy/` | 本番リバースプロキシとゲートウェイ設定例 |
 | `infra/` | 認証ストア、パスワードハッシュ、Redis / Bloom（リポジトリルートに残置） |
@@ -127,23 +136,24 @@ Lawver/
 **3 つの早見ルール：**
 
 1. 以前ルートにあったバックエンドの Python パッケージ / ファイル → `backend/` 配下へ、相対パスはそのまま。  
-   例：`mcp/searxng_client.py` → `backend/mcp/searxng_client.py`；`services/chat_pipeline.py` → `backend/services/chat_pipeline.py`。
+   例：`mcp/searxng_client.py` → `backend/mcp/searxng_client.py`；`services/chat_pipeline.py` → `backend/services/chat_pipeline.py`；元の `agent.py` → `backend/agent.py`。
 2. 以前のフロント `src/`、`public/`、`index.html` → `frontend/` 配下へ。  
    例：`src/hooks/useChat.ts` → `frontend/src/hooks/useChat.ts`；`public/sw.js` → `frontend/public/sw.js`。
-3. 次は**ルートのまま未移動**：`agent.py`（起動入口）、`infra/`、`RAG/`、`tests/`、`scripts/`、`docs/`、`deploy/`、`android/`、`assets/`、`package.json`、`vite.config.ts`、`pyproject.toml`、`.env` / `.env_example`。
+3. 次は**ルートのまま（backend/frontend へ未移動）**：`infra/`、`RAG/`、`tests/`、`scripts/`、`docs/`、`deploy/`、`android/`、`assets/`、`data/`、`package.json`、`vite.config.ts`、`capacitor.config.ts`、`pyproject.toml`、`.env` / `.env_example`。加えて、ルートに**新規**の起動転送 shim `agent.py` がある。日常起動はこれを使い、cwd はリポジトリルートのままにする。
 
 **よく使う旧パス対照：**
 
 | 分割前（旧） | 分割後（新） | 説明 |
 | --- | --- | --- |
-| `agent.py` | `agent.py`（ルート） | 起動契約はルートのまま。内部で `backend/` へ転送 |
+| `agent.py` | `backend/agent.py` + ルート新規 `agent.py` | 旧入口は `backend/` へ。ルート shim が `python agent.py` / `uvicorn agent:app` を維持 |
 | `app_factory.py` | `backend/app_factory.py` | FastAPI アプリケーションファクトリ |
-| `app_config.py` | `backend/app_config.py` | バックエンド設定 |
-| `auth.py` / `hash.py` | `backend/auth.py` / `backend/hash.py` | 認証とパスワードハッシュ CLI |
+| `app_config.py` | `backend/app_config.py` | ルート `package.json` の `appConfig` を読む |
+| `auth.py` / `hash.py` | `backend/auth.py` / `backend/hash.py` | 認証とパスワードハッシュ CLI（`hash.py` はルートで `PYTHONPATH=.` が必要） |
 | `function_calling.py` | `backend/function_calling.py` | モデル呼び出し |
+| `prompt_loader.py` | `backend/prompt_loader.py` | 動的 prompt 組み立て |
 | `mcps.py` | `backend/mcps.py` | ツール転送入口 |
 | `schemas.py` | `backend/schemas.py` | リクエストモデル |
-| `workspace.py` / `media.py` / `context_usage.py` / `ocp.py` | `backend/` 配下の同名ファイル | ワークスペース、メディア、文脈使用量、出力検査 |
+| `workspace.py` / `media.py` / `context_usage.py` / `ocp.py` / `output_sanitizer.py` | `backend/` 配下の同名ファイル | ワークスペース、メディア、文脈使用量、出力検査 / 洗浄 |
 | `agents/` | `backend/agents/` | ToolLoop エージェント |
 | `routes/` | `backend/routes/` | HTTP ルート |
 | `services/` | `backend/services/` | チャット / 法廷 / 記憶パイプライン |
@@ -158,6 +168,8 @@ Lawver/
 | `infra/` | `infra/`（ルート、未移動） | `backend/infra/` は存在しない |
 | `RAG/` | `RAG/`（ルート、未移動） | ローカル法令庫 |
 | `tests/` | `tests/`（ルート、未移動） | ルートで `python -m pytest` |
+| `scripts/` / `docs/` / `deploy/` / `android/` / `assets/` | ルート同名のまま | backend/frontend へは未移動 |
+| `vite.config.ts` | `vite.config.ts`（ルート） | `root` → `frontend/`、`outDir` はルート `dist/` |
 | `dist/` | `dist/`（ルート） | フロントビルド成果物は引き続きルート `dist/` |
 
 **ファイル名で探す（リポジトリルートで）：**
@@ -293,7 +305,7 @@ OCP は主回答後のフォーマット審査 pass です。主モデルの失�
 すべてのリクエストは次の 2 つのルーターだけを通って受け付け・転送され、モジュール間の直接呼び出しは禁止です。
 
 ```text
-backend/routes/  ->  backend/services/  ->  services/agent_builder.py（パラダイムルーター）
+backend/routes/  ->  backend/services/  ->  backend/services/agent_builder.py（パラダイムルーター）
                                  |-- execute_tool  = mcps.use_tools(..., capability)
                                  |-- output_review = services/ocp_service.build_output_review(...)
                                           |

@@ -71,8 +71,9 @@ MCP clients · memory_system · RAG/
 
 ```text
 Lawver/
-├── agent.py                 # 根启动契约：python agent.py / uvicorn agent:app
+├── agent.py                 # 根启动契约（shim）：python agent.py / uvicorn agent:app
 ├── backend/                 # FastAPI 后端与 Agent 运行时
+│   ├── agent.py             # 由根目录迁入的原入口副本（日常请用根 shim）
 │   ├── app_factory.py       # 应用工厂
 │   ├── routes/              # HTTP 路由
 │   ├── services/            # 业务服务与流水线
@@ -82,8 +83,10 @@ Lawver/
 │   ├── mcp/                 # 法条、案例、企业、文档、联网等客户端
 │   ├── memory_system/       # 对话级记忆
 │   ├── prompts/lawver/      # 动态 prompt
+│   ├── prompt_loader.py     # 动态 prompt 装配
 │   ├── llm/                 # 模型客户端封装
-│   └── ocp.py               # 输出审查
+│   ├── ocp.py               # 输出审查
+│   └── workspace.py         # 工作区路径边界
 ├── frontend/                # React 19 + Vite 前端
 │   ├── src/                 # 页面、组件、hooks、API 客户端
 │   ├── public/              # PWA / 静态资源
@@ -96,7 +99,9 @@ Lawver/
 ├── scripts/                 # 构建与前端单测脚本
 ├── tests/                   # 后端与集成测试
 ├── assets/                  # 品牌资源
+├── data/                    # 运行时数据（账号库、工作区等，勿提交密钥）
 ├── package.json             # 前端依赖与常用脚本
+├── vite.config.ts           # Vite 配置（root=frontend/，outDir=根 dist/）
 ├── pyproject.toml           # Python 依赖
 └── dist/                    # 前端构建产物（gitignore，供 SPA / Capacitor 使用）
 ```
@@ -105,7 +110,8 @@ Lawver/
 
 | 路径 | 说明 |
 | --- | --- |
-| `agent.py` | 根入口，把 `backend/` 加入路径后创建应用；支持 `PORT` 与 `UVICORN_WORKERS` |
+| `agent.py` | 根入口 shim：把 `backend/` 加入路径后创建应用；支持 `PORT` 与 `UVICORN_WORKERS` |
+| `backend/agent.py` | 拆分时由根目录迁入的原入口；日常启动请用根 `agent.py` |
 | `backend/app_factory.py` | FastAPI 应用工厂，集中注册中间件、路由和生命周期任务 |
 | `backend/routes/` | 认证、管理员、聊天、模拟法庭、工作区、SPA fallback 等 HTTP 路由 |
 | `backend/services/` | 聊天与庭审流水线、历史压缩、记忆协调、法库缓存、工作区清理 |
@@ -114,9 +120,11 @@ Lawver/
 | `backend/mcps.py` | 业务工具统一转发入口 |
 | `backend/mcp/` | 法律、企业、PDF、Word、TXT/Markdown、记忆、SearXNG 等客户端 |
 | `backend/memory_system/` | 对话级结构化记忆服务 |
+| `backend/prompt_loader.py` | 动态系统 prompt 装配 |
 | `RAG/` | 本地法库与东盟大陆法 / 伊斯兰法 / 普通法管辖库 |
 | `backend/prompts/lawver/` | 核心、模式、焦点、任务、模拟法庭等动态 prompt |
 | `frontend/src/` | React 前端（主聊天与模拟法庭） |
+| `vite.config.ts` | Vite 配置：源码根为 `frontend/`，构建输出为根 `dist/` |
 | `tests/` | 记忆、OCP、工具循环、模拟法庭、安全加固、架构边界等测试 |
 | `deploy/` | 生产反代与网关配置示例 |
 | `infra/` | 认证存储、密码哈希、Redis / 布隆过滤器等共享基础设施（仍在仓库根） |
@@ -128,23 +136,24 @@ Lawver/
 **三条速查规则：**
 
 1. 以前在仓库根目录的后端 Python 包 / 文件 → 整体挪到 `backend/` 下，相对路径不变。  
-   例：`mcp/searxng_client.py` → `backend/mcp/searxng_client.py`；`services/chat_pipeline.py` → `backend/services/chat_pipeline.py`。
+   例：`mcp/searxng_client.py` → `backend/mcp/searxng_client.py`；`services/chat_pipeline.py` → `backend/services/chat_pipeline.py`；原 `agent.py` → `backend/agent.py`。
 2. 以前的前端 `src/`、`public/`、`index.html` → 挪到 `frontend/` 下。  
    例：`src/hooks/useChat.ts` → `frontend/src/hooks/useChat.ts`；`public/sw.js` → `frontend/public/sw.js`。
-3. 下列项**仍在仓库根，没有搬家**：`agent.py`（启动入口）、`infra/`、`RAG/`、`tests/`、`scripts/`、`docs/`、`deploy/`、`android/`、`assets/`、`package.json`、`vite.config.ts`、`pyproject.toml`、`.env` / `.env_example`。
+3. 下列项**仍在仓库根（未搬入 backend/frontend）**：`infra/`、`RAG/`、`tests/`、`scripts/`、`docs/`、`deploy/`、`android/`、`assets/`、`data/`、`package.json`、`vite.config.ts`、`capacitor.config.ts`、`pyproject.toml`、`.env` / `.env_example`。另外，根目录**新建**了启动转发层 `agent.py`（shim），日常请用它启动，不要把 cwd 切到 `backend/`。
 
 **常见旧路径对照：**
 
 | 拆分前（旧） | 拆分后（新） | 说明 |
 | --- | --- | --- |
-| `agent.py` | `agent.py`（根目录） | 启动契约仍在根；内部转发到 `backend/` |
+| `agent.py` | `backend/agent.py` + 根目录新建 `agent.py` | 原入口迁入 `backend/`；根 shim 保留 `python agent.py` / `uvicorn agent:app` |
 | `app_factory.py` | `backend/app_factory.py` | FastAPI 应用工厂 |
-| `app_config.py` | `backend/app_config.py` | 后端配置 |
-| `auth.py` / `hash.py` | `backend/auth.py` / `backend/hash.py` | 认证与密码哈希 CLI |
+| `app_config.py` | `backend/app_config.py` | 从仓库根 `package.json` 的 `appConfig` 读域名与端口 |
+| `auth.py` / `hash.py` | `backend/auth.py` / `backend/hash.py` | 认证与密码哈希 CLI（`hash.py` 需在仓库根设 `PYTHONPATH=.`） |
 | `function_calling.py` | `backend/function_calling.py` | 模型调用封装 |
+| `prompt_loader.py` | `backend/prompt_loader.py` | 动态 prompt 装配 |
 | `mcps.py` | `backend/mcps.py` | 工具转发入口 |
 | `schemas.py` | `backend/schemas.py` | 请求体模型 |
-| `workspace.py` / `media.py` / `context_usage.py` / `ocp.py` | `backend/` 下同名文件 | 工作区、媒体、上下文用量、输出审查 |
+| `workspace.py` / `media.py` / `context_usage.py` / `ocp.py` / `output_sanitizer.py` | `backend/` 下同名文件 | 工作区、媒体、上下文用量、输出审查与清洗 |
 | `agents/` | `backend/agents/` | ToolLoop Agent |
 | `routes/` | `backend/routes/` | HTTP 路由 |
 | `services/` | `backend/services/` | 聊天 / 庭审 / 记忆等流水线 |
@@ -159,6 +168,8 @@ Lawver/
 | `infra/` | `infra/`（根目录，未搬） | 勿到 `backend/infra/` 寻找 |
 | `RAG/` | `RAG/`（根目录，未搬） | 本地法库 |
 | `tests/` | `tests/`（根目录，未搬） | 测试仍从仓库根跑 `python -m pytest` |
+| `scripts/` / `docs/` / `deploy/` / `android/` / `assets/` | 同名仍在根目录 | 未搬入 backend/frontend |
+| `vite.config.ts` | `vite.config.ts`（根目录） | `root` 指向 `frontend/`，`outDir` 仍为根 `dist/` |
 | `dist/` | `dist/`（根目录） | 前端构建产物仍输出到根 `dist/`，供 FastAPI SPA 使用 |
 
 **按文件名快速查找（在仓库根执行）：**
@@ -466,7 +477,7 @@ OCP 是主回复后的格式审查 pass。主模型失败仍按主模型错误�
 所有请求只经过两条路由接受和转发，禁止跨模块直连：
 
 ```text
-backend/routes/  ->  backend/services/  ->  services/agent_builder.py（范式路由）
+backend/routes/  ->  backend/services/  ->  backend/services/agent_builder.py（范式路由）
                                  |-- execute_tool  = mcps.use_tools(..., capability)
                                  |-- output_review = services/ocp_service.build_output_review(...)
                                           |
