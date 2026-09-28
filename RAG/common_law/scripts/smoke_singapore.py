@@ -10,6 +10,7 @@ from RAG.common_law.singapore import (
     fuzzy_search,
     link_search,
     semantic_search,
+    DATA_PATH,
 )
 
 
@@ -36,8 +37,9 @@ def main() -> None:
 
     ready = ensure_singapore_law_database_ready()
     assert ready["mode"] in {"full", "unchanged"}
-    assert ready["record_count"] == 10
-    report.append({"case": "ensure", "mode": ready["mode"]})
+    expected = 10 if DATA_PATH.name == "official_seed.json" else 57826
+    assert ready["record_count"] == expected
+    report.append({"case": "ensure", "mode": ready["mode"], "record_count": ready["record_count"]})
 
     exact = decode(exact_search(KNOWN_TITLE, "section 1"))
     assert exact["success"] is True

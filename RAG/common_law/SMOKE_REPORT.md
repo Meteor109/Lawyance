@@ -1,5 +1,19 @@
 # Singapore Written Law Smoke Report
 
+## 2026-09-28 full-corpus delivery acceptance
+
+- Singapore: 57,826 records built from 12 gzip JSONL shards; exact, fuzzy, semantic alias and link smoke cases passed.
+- Myanmar: 685 documents / 13,122 entries; all assembly smoke checks passed.
+- Both SQLite files: `PRAGMA integrity_check` returned `ok`.
+- Reinitializing the shared facade returned `reuse`; Myanmar returned `reuse`, Singapore returned `unchanged`. Country manifest files no longer overwrite each other.
+- Final country regression modules: **13 passed**, including compressed/plain JSONL loading, source changes, missing or corrupt shards and shared-cache isolation.
+- The full shard list and SHA-256 checks passed against the shipped corpus manifest.
+- Verification used a checkout of Meteor109/Lawyance main at `ffe89ad43fe82cdbc581f12a0f6b469e9b6cdc7a` plus this delivery change; no production server was deployed or verified.
+
+Commands: `python -m RAG.common_law.scripts.assembly_smoke_cases`; `python -m pytest tests/test_singapore_law.py tests/test_myanmar_law.py -q`; `ensure_common_law_database_ready()` followed by read-only SQLite integrity checks.
+
+## Historical seed-only acceptance
+
 Date: 2026-09-19
 
 Result: `ALL_PASS`

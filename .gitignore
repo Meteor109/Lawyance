@@ -42,3 +42,4 @@ android/app/*.p12
 android/app/keystore.properties
 android/app/release-keystore.*
 test
+.test-tmp-common-law-*/

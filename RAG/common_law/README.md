@@ -17,7 +17,7 @@ RAG/common_law/
 ├── build_corpus.py              缅甸语料重建（需要外部 OCR 输入）
 ├── data/
 │   ├── MM/                      缅甸 MOI 语料（documents.jsonl）
-│   └── SG/                      新加坡成文法种子（official_seed.json）
+│   └── SG/                      新加坡完整公报压缩分片（corpus/）与回归样本
 ├── cache/                       构建产物，可删，会自动重建
 │   ├── myanmar_law.db
 │   └── singapore_law.db
@@ -27,7 +27,7 @@ RAG/common_law/
 └── BUILD.md
 ```
 
-两国索引仍是两个 SQLite 文件。缅甸按整份文件加条款候选入库，新加坡按成文法 section 入库，不并成一张表。
+两国索引仍是两个 SQLite 文件，建库指纹清单也各自独立。缅甸有 685 份文件、13,122 条检索记录；新加坡有 28,451 份官方公报、57,826 条检索记录，以页面分组正文为主，并保留 section 回归样本。数量、部署和质量边界见 BUILD.md。
 
 ## 常用命令
 
