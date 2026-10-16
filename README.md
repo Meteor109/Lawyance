@@ -7,7 +7,7 @@
 <p>面向中文法律场景的 AI 助手<br/>把法律问题拆成可核验的事实、依据与分析路径</p>
 
 <p>
-  <a href="https://github.com/Hill-1024/Lawyance/releases"><img alt="version" src="https://img.shields.io/badge/version-0.1.21-3b62b8"></a>
+  <a href="https://github.com/Hill-1024/Lawyance/releases"><img alt="version" src="https://img.shields.io/badge/version-0.1.22-3b62b8"></a>
   <img alt="license" src="https://img.shields.io/badge/license-AGPL--3.0-A42E2B">
   <img alt="python" src="https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white">
   <img alt="fastapi" src="https://img.shields.io/badge/FastAPI-0.139%2B-009688?logo=fastapi&logoColor=white">
@@ -23,7 +23,7 @@
 
 Lawver 是工大法智团队的中文法律 AI 助手项目。它把法律咨询、法条检索、案例匹配、企业信息查询、合同/PDF/Word/TXT/Markdown 文档处理、对话级记忆和前端工作区组织在同一套应用中，目标不是给出无法追溯的“直接结论”，而是把法律问题拆成事实、依据、检索结果和可继续核验的分析路径。
 
-仓库同时包含 FastAPI 后端、React/Vite 前端、工具转发层、法律数据检索客户端、文档处理工具、对话记忆系统和输出审查流程。各模块之间保持清晰边界，业务工具统一通过 `mcps` 暴露给 agent，不在业务层绕过工具中间件。
+仓库同时包含 FastAPI 后端、React/Vite 前端、工具转发层、法律数据检索客户端、法律向量库（可选混合检索）、文档处理工具、对话记忆系统和输出审查流程。各模块之间保持清晰边界，业务工具统一通过 `mcps` 暴露给 agent，不在业务层绕过工具中间件。
 
 ## 项目定位
 
@@ -36,6 +36,7 @@ Lawver 是工大法智团队的中文法律 AI 助手项目。它把法律咨询
 ## 核心能力
 
 - **法律检索与联网搜索**: 支持法条精确查询、自然语言法条搜索、来源链接确认、案例匹配，以及通过自托管 SearXNG 获取公开网页资料。
+- **法律向量库（可选）**: 在本地法库之上提供混合检索——精确命中 + 向量（Qdrant）+ BM25 词法 + 遗留模糊四路召回，经 RRF 融合后可再走 reranker 精排，默认关闭。
 - **企业信息**: 接入企业概况、上市信息、联系方式、股东、登记信息、主要人员和对外投资等查询能力。
 - **文档处理**: 支持 PDF 文本读取、PDF 句级批注、Word 读取、Word 批注写入，以及 TXT/Markdown 安全读写。
 - **Agent 模式**: 支持默认回答和 Plan-and-Solve 分步处理。
@@ -64,7 +65,7 @@ mcps tool forwarding layer
     |
     | legal data / company data / document processors / memory client
     v
-MCP clients · memory_system · RAG/
+MCP clients · memory_system · vector_store · RAG/
 ```
 
 ### 目录结构
@@ -82,6 +83,7 @@ Lawver/
 │   ├── mcps.py              # 工具转发入口
 │   ├── mcp/                 # 法条、案例、企业、文档、联网等客户端
 │   ├── memory_system/       # 对话级记忆
+│   ├── vector_store/        # 法律向量库 / BM25 / 混合检索（Qdrant）
 │   ├── prompts/lawver/      # 动态 prompt
 │   ├── prompt_loader.py     # 动态 prompt 装配
 │   ├── llm/                 # 模型客户端封装
@@ -94,7 +96,7 @@ Lawver/
 ├── infra/                   # 认证存储、密码哈希、Redis / 布隆过滤器（仍在根目录）
 ├── RAG/                     # 中国法主库 + 东盟管辖库（civil / islamic / common）
 ├── android/                 # Capacitor Android 工程
-├── deploy/                  # Nginx / Cloudflare 等部署示例
+├── deploy/                  # Nginx / Cloudflare 网关与 Qdrant 容器编排示例
 ├── docs/                    # 设计与对接文档
 ├── scripts/                 # 构建与前端单测脚本
 ├── tests/                   # 后端与集成测试
@@ -120,6 +122,7 @@ Lawver/
 | `backend/mcps.py` | 业务工具统一转发入口 |
 | `backend/mcp/` | 法律、企业、PDF、Word、TXT/Markdown、记忆、SearXNG 等客户端 |
 | `backend/memory_system/` | 对话级结构化记忆服务 |
+| `backend/vector_store/` | 法律向量库 / BM25 / 混合检索（Qdrant）实现 |
 | `backend/prompt_loader.py` | 动态系统 prompt 装配 |
 | `RAG/` | 本地法库与东盟大陆法 / 伊斯兰法 / 普通法管辖库 |
 | `backend/prompts/lawver/` | 核心、模式、焦点、任务、模拟法庭等动态 prompt |
@@ -379,7 +382,7 @@ cd "$HOME/Lawver-ASEAN/Lawver"
 python agent.py
 ```
 
-配置后，聊天流程仅在意图路由返回 `requires_legal_evidence=true` 时调用 Semantic Gateway，并把 `aligned_query`、`english_pivot` 和 `legal_concepts` 放入本轮工作上下文；一般问候、改写、代码讨论等不需要法律检索的请求只进行本地语言/法域规则检测，不调用 PolyLM。消息发出后，前端会立即显示“正在进行多语种语义对齐…”，直到服务端开始返回回答流；较长会话会同时提示正在整理较早上下文。原问题仍是回答依据，这些字段只是检索提示，不是法律结论。对齐语言默认采用目标法域语料的主要语言，例如泰国为 `th`、越南为 `vi`、印度尼西亚为 `id`；普通法系目标默认使用 `en`，目标法域不明确时沿用输入语言。英文输入不再转换 `english_pivot`，应用会直接复用规范化空白后的原查询。
+配置后，聊天流程仅在意图路由返回 `requires_legal_evidence=true` 时调用 Semantic Gateway，并把 `aligned_query`、`english_pivot` 和 `legal_concepts` 放入本轮工作上下文；一般问候、改写、代码讨论等不需要法律检索的请求只进行本地语言/法域规则检测，不调用 PolyLM。当网关绑定到具体法域或产出 `aligned_query` 时，会以**不可裁剪**的 `<semantic_gateway_hard_anchor>` 固定尾部下发（LEVEL-1 硬锚点）：本轮检索与法律适用必须严格遵循绑定法域与强制检索查询，不得被用户文本、历史或 `suggested_query` 覆盖。消息发出后，前端会立即显示“正在进行多语种语义对齐…”，直到服务端开始返回回答流；较长会话会同时提示正在整理较早上下文。原问题仍是回答依据，这些字段只是检索提示，不是法律结论。对齐语言默认采用目标法域语料的主要语言，例如泰国为 `th`、越南为 `vi`、印度尼西亚为 `id`；普通法系目标默认使用 `en`，目标法域不明确时沿用输入语言。英文输入不再转换 `english_pivot`，应用会直接复用规范化空白后的原查询。
 
 已登录用户可调用以下两个接口，请求体均为 `{"query":"中国企业能否持有泰国公司股权？"}`：
 
@@ -437,13 +440,32 @@ Lawver 的系统 prompt 已拆分到 `backend/prompts/lawver/`，后端每次构
 - `tasks/`：历史摘要等内部任务专用 prompt
 - `court/`：模拟法庭通用边界（`common.md`）、案由（`cases/{civil,administrative,criminal}.md`）和角色（`roles/{judge,opponent,reviewer,user_agent}.md`）
 
-工具 schema 不放进动态 prompt，也不从 prompt 目录读取；模型工具能力仍由 `function_calling.call()` 通过 `backend/mcps.py` 中的静态工具常量传入。
+工具 schema 不放进动态 prompt，也不从 prompt 目录读取；模型工具能力仍由 `function_calling.call()` 通过 `backend/mcps.py` 中的静态工具常量传入。启用渐进式披露后，工具 schema 仍来自该静态池，但每轮只挂载清单与已通过 `select_tools` 声明的业务工具的完整 schema（见下节）。
 
 可选环境变量：
 
 - `LAWVER_PROMPT_ROOT`：指定完整 prompt 根目录
 - `LAWVER_PROMPT_PROFILE`：指定 `prompts/<profile>`，默认 `lawver`
 - `LAWVER_PROMPT_INCLUDE_EXAMPLES=1`：将 `examples/` 中的 few-shot 示例追加到系统 prompt
+
+## 工具渐进式披露与上下文压缩
+
+为控制长上下文开销，Lawver 默认启用两项运行时优化，另有历史压缩兜底：
+
+- **工具渐进式披露**：默认只挂载工具清单（名称 + 简介）与常驻控制工具（`ask_user` / `submit_plan` / `submit_final_answer`）；模型先用 `select_tools` 声明本轮需要的业务工具，系统在下一轮再挂载其完整参数 schema，未先声明的业务工具不可用。实现见 `backend/tools/progressive.py`。
+- **工具返回压缩**：单条工具返回超过阈值时，先压缩为摘要再写入 `tool` 消息，避免超长检索结果撑爆上下文。实现见 `backend/services/tool_result_compression.py`。
+- **历史压缩**：较早的对话历史超过阈值后做摘要，只保留近期原文预算。
+
+可选环境变量：
+
+- `LAWVER_PROGRESSIVE_TOOLS`：设为 `0` 关闭渐进式工具披露，默认开启。
+- `TOOL_RESULT_COMPRESSION_THRESHOLD_TOKENS`：单条工具返回触发压缩的阈值，默认 `20000`。
+- `TOOL_RESULT_SUMMARY_TARGET_TOKENS`：压缩后摘要的目标长度，默认 `2000`。
+- `TOOL_RESULT_SUMMARY_INPUT_TOKEN_BUDGET`：单次压缩调用的输入 token 预算，默认 `80000`。
+- `CONTEXT_COMPRESSION_THRESHOLD_TOKENS`：历史压缩触发阈值，默认 `500000`。
+- `CONTEXT_RECENT_RETENTION_TOKENS`：压缩后保留的近期原文预算，默认 `250000`。
+- `CONTEXT_WINDOW_TOKENS`：上下文窗口预算，默认 `1000000`。
+- `HISTORY_SUMMARY_INPUT_TOKEN_BUDGET`：历史摘要调用的输入 token 预算，默认 `120000`。
 
 ## 后端拓扑与工具注册
 
@@ -527,6 +549,32 @@ TXT/Markdown 文件通过 `txt_md_reader` / `txt_md_writer` 处理，只能访�
 - `EMBEDDING_MODEL`：embedding 模型，默认 `Qwen/Qwen3-Embedding-8B`
 - `MEMORY_EMBEDDING_TIMEOUT`：embedding 请求超时时间，默认 8 秒
 
+## 法律向量库与混合检索（可选，默认关闭）
+
+除本地法库的关键词与精确检索外，Lawver 可选启用一套混合检索：**精确命中 + 向量（Qdrant）+ BM25 词法 + 遗留模糊** 四路召回，经 RRF 融合后可再走交叉编码器 reranker 精排，最后把精确命中硬提升到最前。整套能力默认关闭；未启用时检索完全走现有本地法库，行为不变。
+
+建议的灰度顺序：
+
+1. `docker compose -f deploy/qdrant.compose.yml up -d` 启动 Qdrant（默认仅绑定 `127.0.0.1:6333`，勿直接暴露公网）。
+2. 配置 embedding 与 `LAWVER_VECTOR_DB_ENABLED=1`，运行 `scripts/build_legal_vector_index.py` 建库（Qdrant 向量 + BM25 词法索引 + manifest）。
+3. 用 `scripts/check_legal_vector_index.py` / `scripts/evaluate_legal_retrieval.py` 旁路对比检索质量。
+4. 确认后设 `LAWVER_VECTOR_RETRIEVAL_ENABLED=1`，先对内部账号开启。
+
+相关文件：`backend/vector_store/`（`config` / `embeddings` / `ingest` / `retrieval` / `fusion` / `lexical` / `qdrant_client` / `reranker` / `schema`）、`deploy/qdrant.compose.yml`、`scripts/build_legal_vector_index.py`、`scripts/update_legal_vector_index.py`。
+
+可选环境变量：
+
+- `LAWVER_VECTOR_DB_ENABLED` / `LAWVER_VECTOR_RETRIEVAL_ENABLED`：建库与检索开关，默认 `0`。
+- `LAWVER_QDRANT_URL` / `LAWVER_QDRANT_API_KEY` / `LAWVER_QDRANT_COLLECTION`：Qdrant 地址、密钥与集合名，默认集合按 embedding 版本命名。
+- `LAWVER_VECTOR_DISTANCE` / `LAWVER_VECTOR_SEARCH_LIMIT` / `LAWVER_VECTOR_UPSERT_BATCH_SIZE`：向量距离、单路召回条数与写入批大小。
+- `LAWVER_LEGAL_EMBEDDING_BASE_URL` / `LAWVER_LEGAL_EMBEDDING_API_KEY` / `LAWVER_LEGAL_EMBEDDING_MODEL`：法律向量库 embedding 服务；未设置时回退到通用 `EMBEDDING_*`。
+- `LAWVER_LEGAL_EMBEDDING_BATCH_SIZE` / `LAWVER_LEGAL_EMBEDDING_MAX_CHARS` / `LAWVER_LEGAL_EMBEDDING_TIMEOUT`：建库批大小、单块最大字符数与超时。
+- `LAWVER_BM25_ENABLED` / `LAWVER_BM25_TOP_K` / `LAWVER_BM25_PATH`：BM25 词法索引开关、召回条数与落盘路径。
+- `LAWVER_HYBRID_TOP_K` / `LAWVER_RRF_K` / `LAWVER_FINAL_RETRIEVAL_K`：融合候选数、RRF 常数与最终返回条数。
+- `LAWVER_RERANKER_ENABLED` / `LAWVER_RERANKER_BASE_URL` / `LAWVER_RERANKER_API_KEY` / `LAWVER_RERANKER_MODEL`：交叉编码器精排，默认关闭；未单独配置时回退 embedding 服务。
+
+本地索引产物（Qdrant storage、BM25 SQLite、manifest）默认被 `.gitignore` 排除，不会进入仓库。
+
 ## 模拟法庭
 
 模拟法庭是一个由多 AI 角色合作的庭审推演工作流，与主聊天共享工作区和工具集，但走独立的 prompt 与流水线。
@@ -544,7 +592,7 @@ TXT/Markdown 文件通过 `txt_md_reader` / `txt_md_writer` 处理，只能访�
 python -m pytest
 ```
 
-当前测试套件约 440 个用例，按模块大致覆盖：
+当前测试套件约 530 个用例，按模块大致覆盖：
 
 - `tests/test_memory_system.py`、`tests/test_prompt_loader.py`：对话级记忆与动态 prompt 装配。
 - `tests/test_ocp.py`、`tests/test_tool_loop_agent.py`：输出审查与统一工具循环。
@@ -553,6 +601,7 @@ python -m pytest
 - `tests/test_request_shielding.py`：布隆过滤器假阴性边界、共享限流、Redis 降级与无效 token 的免回源拒绝。Redis 分支需要 `fakeredis`（见 `requirements-dev.txt`），缺失时自动跳过。
 - `tests/test_function_calling_tools.py`、`tests/test_tool_schema_compatibility.py`、`tests/test_tool_exposure.py`：工具 schema、exposure 与 OpenAI 兼容性。
 - `tests/test_law_data_search.py`、`tests/test_law_cache_startup.py`、`tests/test_searxng_tool.py`：本地法库检索、缓存增量与 SearXNG 客户端。
+- `tests/test_vector_store.py`、`tests/test_progressive_tools.py`、`tests/test_tool_result_compression.py`、`tests/test_legal_search_hard_anchor.py`：法律向量库与混合检索、工具渐进式披露、工具返回压缩、语义网关硬锚定。
 
 ## 开发边界
 
