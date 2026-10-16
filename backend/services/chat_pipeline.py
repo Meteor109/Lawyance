@@ -26,6 +26,11 @@ from schemas import ChatRequest
 from services.agent_builder import build_agent
 from services.conversation_state import active_conversations
 from services.context_compiler import CompiledContext, compile_context
+from services.query_detection import SemanticGatewayResult
+from services.semantic_gateway_context import (
+    reset_current_semantic_gateway,
+    set_current_semantic_gateway,
+)
 from context_usage import (
     reset_current_context_usage_accumulator,
     set_current_context_usage_accumulator,
@@ -55,6 +60,7 @@ class PreparedChatTurn:
     turn_id: str
     agent: object
     attention_trace: dict | None = None
+    semantic_gateway: SemanticGatewayResult | None = None
 
 
 def _prune_unanswered_tool_calls(sanitized_history: list[dict]) -> None:
@@ -230,6 +236,7 @@ async def prepare_chat_turn(request: ChatRequest, current_user: str) -> Prepared
         turn_id=turn_id,
         agent=agent,
         attention_trace=compiled_context.attention_trace,
+        semantic_gateway=compiled_context.semantic_gateway,
     )
 
 
@@ -250,6 +257,7 @@ async def run_agent_stream(prepared: PreparedChatTurn) -> AsyncIterator[dict]:
     awaiting_user_choice = False
     turn_token = set_current_memory_turn_id(prepared.turn_id)
     usage_token, usage_accumulator = set_current_context_usage_accumulator()
+    gateway_token = set_current_semantic_gateway(prepared.semantic_gateway)
     try:
         try:
             run_iter = await _run_agent(prepared, stream=True)
@@ -312,12 +320,14 @@ async def run_agent_stream(prepared: PreparedChatTurn) -> AsyncIterator[dict]:
         logger.exception("Chat stream generation failed")
         yield {"type": "error", "code": "chat_generation_failed", "content": CHAT_FAILURE_MESSAGE}
     finally:
+        reset_current_semantic_gateway(gateway_token)
         reset_current_memory_turn_id(turn_token)
 
 
 async def run_agent_once(prepared: PreparedChatTurn) -> dict:
     turn_token = set_current_memory_turn_id(prepared.turn_id)
     usage_token, usage_accumulator = set_current_context_usage_accumulator()
+    gateway_token = set_current_semantic_gateway(prepared.semantic_gateway)
     try:
         full_result = ""
         context_messages = []
@@ -388,6 +398,7 @@ async def run_agent_once(prepared: PreparedChatTurn) -> dict:
             result["context_usage"] = usage_payload
         return result
     finally:
+        reset_current_semantic_gateway(gateway_token)
         reset_current_memory_turn_id(turn_token)
 
 

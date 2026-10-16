@@ -107,8 +107,10 @@ class ContextCompilerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("输入语言: en", compiled.working_context_text)
-        self.assertIn("法域线索: TH（泰国）", compiled.working_context_text)
+        self.assertIn("<semantic_gateway_hard_anchor", compiled.working_context_text)
+        self.assertIn("绑定法域: TH（泰国）", compiled.working_context_text)
         self.assertEqual(compiled.attention_trace["query_detection"]["jurisdiction"], "TH")
+        self.assertIsNotNone(compiled.semantic_gateway)
 
     async def test_context_uses_polylm_semantic_gateway_result(self):
         query = "กฎหมายเวียดนามใช้กับกรณีนี้หรือไม่?"
@@ -150,16 +152,23 @@ class ContextCompilerTests(unittest.IsolatedAsyncioTestCase):
 
         semantic_gateway.assert_awaited_once_with(query)
         self.assertIn("输入语言: th", compiled.working_context_text)
-        self.assertIn("法域线索: VN（越南）", compiled.working_context_text)
-        self.assertIn("单路语义对齐查询（vi）", compiled.working_context_text)
+        self.assertIn("<semantic_gateway_hard_anchor", compiled.working_context_text)
+        self.assertIn("绑定法域: VN（越南）", compiled.working_context_text)
+        self.assertIn("强制检索查询（vi）", compiled.working_context_text)
         self.assertIn("áp dụng pháp luật Việt Nam cho vụ việc", compiled.working_context_text)
         self.assertIn("English Pivot: Whether Vietnamese law applies", compiled.working_context_text)
         self.assertIn("Legal Concepts（仅作检索提示", compiled.working_context_text)
         self.assertIn("applicable law, choice of law", compiled.working_context_text)
+        self.assertIn(
+            "必须严格采纳 semantic_gateway_hard_anchor",
+            compiled.working_context_text,
+        )
         self.assertEqual(compiled.attention_trace["query_detection"]["source"], "polylm")
         self.assertTrue(compiled.attention_trace["semantic_gateway"]["aligned"])
         self.assertTrue(compiled.attention_trace["semantic_gateway_required"])
         self.assertFalse(compiled.attention_trace["semantic_gateway_skipped"])
+        self.assertTrue(compiled.semantic_gateway.aligned)
+        self.assertEqual(compiled.semantic_gateway.detection.jurisdiction, "VN")
 
     async def test_non_legal_request_skips_polylm_semantic_gateway(self):
         query = "请帮我把这句话改得更简洁。"

@@ -37,11 +37,11 @@ COUNTRY_LABELS = {
 }
 _COUNTRY_NAMES = {
     "CN": ("中国", "中华人民共和国", "China", "Chinese", "จีน", "Trung Quốc", "Tiongkok"),
-    "TH": ("泰国", "Thailand", "Thai", "ไทย", "Thái Lan"),
-    "VN": ("越南", "Vietnam", "Viet Nam", "Việt Nam", "เวียดนาม"),
-    "ID": ("印度尼西亚", "印尼", "Indonesia", "Indonesian", "อินโดนีเซีย"),
-    "MY": ("马来西亚", "Malaysia", "Malaysian", "มาเลเซีย"),
-    "SG": ("新加坡", "Singapore", "Singaporean", "สิงคโปร์"),
+    "TH": ("泰国", "Thailand", "Thai", "ไทย", "Thái Lan", "تايلاند"),
+    "VN": ("越南", "Vietnam", "Viet Nam", "Việt Nam", "เวียดนาม", "فيتنام"),
+    "ID": ("印度尼西亚", "印尼", "Indonesia", "Indonesian", "อินโดนีเซีย", "إندونيسيا"),
+    "MY": ("马来西亚", "Malaysia", "Malaysian", "มาเลเซีย", "ماليزيا"),
+    "SG": ("新加坡", "Singapore", "Singaporean", "สิงคโปร์", "سنغافورة"),
     "KH": ("柬埔寨", "Cambodia", "Cambodian", "កម្ពុជា"),
     "LA": ("老挝", "Laos", "Lao PDR", "ລາວ"),
     "MM": ("缅甸", "Myanmar", "Burma", "မြန်မာ"),
@@ -449,6 +449,15 @@ def _completion_prompt(query: str) -> str:
     return f"{_POLYLM_INSTRUCTIONS}\n\nInput JSON:\n{request}\n\nOutput JSON:\n"
 
 
+def _polylm_timeout_seconds() -> float:
+    raw = (os.getenv("POLYLM_TIMEOUT") or "15").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 15.0
+    return value if value > 0 else 15.0
+
+
 async def _call_openai_compatible_model(
     *,
     base_url: str,
@@ -462,6 +471,7 @@ async def _call_openai_compatible_model(
     from llm.client import build_client
     from openai import BadRequestError
 
+    timeout = _polylm_timeout_seconds()
     async with build_client(api_key or "EMPTY", base_url) as client:
         mode = _polylm_api_mode()
         if mode != "completion":
@@ -474,7 +484,7 @@ async def _call_openai_compatible_model(
                     ],
                     "temperature": 0,
                     "max_tokens": 320,
-                    "timeout": 15.0,
+                    "timeout": timeout,
                 }
                 if json_schema is not None:
                     chat_request["response_format"] = {
@@ -501,7 +511,7 @@ async def _call_openai_compatible_model(
             "prompt": completion_prompt,
             "temperature": 0,
             "max_tokens": 320,
-            "timeout": 15.0,
+            "timeout": timeout,
         }
         if json_schema is not None:
             completion_request["extra_body"] = {

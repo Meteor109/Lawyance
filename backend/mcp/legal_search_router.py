@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Callable
 
@@ -15,6 +16,8 @@ from mcp.pkulaw_client import (
     get_linked_content as china_get_linked_content,
     search_article as china_search_article,
 )
+
+logger = logging.getLogger(__name__)
 
 JURISDICTION_HELP = (
     "法域。不填或中国表示中国法主库。"
@@ -178,15 +181,62 @@ def _reason_for(system: str, country: dict[str, str], islamic_topic: bool) -> st
     return f"按 {label} 对应法系检索"
 
 
+def _gateway_forced_query(fallback: str) -> str:
+    """When PolyLM hard-anchor is bound, force retrieval text to aligned_query."""
+    from services.semantic_gateway_context import get_current_semantic_gateway
+
+    gateway = get_current_semantic_gateway()
+    if gateway and gateway.aligned and str(gateway.aligned_query or "").strip():
+        return str(gateway.aligned_query).strip()
+    return fallback
+
+
+def _gateway_forced_jurisdiction_arg(fallback: str) -> str:
+    """When PolyLM binds a country, force tool jurisdiction to that country's system."""
+    from services.semantic_gateway_context import (
+        get_current_semantic_gateway,
+        tool_jurisdiction_for_gateway_country,
+    )
+
+    gateway = get_current_semantic_gateway()
+    if not gateway or not gateway.detection.jurisdiction:
+        return fallback
+    forced = tool_jurisdiction_for_gateway_country(gateway.detection.jurisdiction)
+    if forced is None:
+        return fallback
+    return forced
+
+
+def _gateway_bound_country() -> dict[str, str] | None:
+    from services.query_detection import COUNTRY_LABELS
+    from services.semantic_gateway_context import (
+        GATEWAY_COUNTRY_LABEL_EN,
+        get_current_semantic_gateway,
+    )
+
+    gateway = get_current_semantic_gateway()
+    code = gateway.detection.jurisdiction if gateway else None
+    if not code:
+        return None
+    return {
+        "country": code,
+        "country_label": COUNTRY_LABELS.get(code, code),
+        "country_label_en": GATEWAY_COUNTRY_LABEL_EN.get(code, code),
+    }
+
+
 def resolve_legal_systems(question: str) -> str:
     """识别提问涉及的国家与应查法系，并给出建议检索调用。
 
     不直接查库；LLM 应按返回的 systems 分别调用 search_article / get_article。
+    若本轮绑定了语义网关硬锚点法域，则以该法域为准并强制 suggested_query。
     """
     text = str(question or "").strip()
-    countries = detect_countries(text)
+    bound = _gateway_bound_country()
+    countries = [bound] if bound else detect_countries(text)
     islamic_topic = bool(_ISLAMIC_TOPIC_RE.search(text))
     topic = _topic_keywords(text) or text[:80]
+    forced_query = _gateway_forced_query("")
 
     systems: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str]] = set()
@@ -199,7 +249,9 @@ def resolve_legal_systems(question: str) -> str:
         seen_keys.add(key)
         label_zh = country["country_label"] if country else ""
         label_en = country["country_label_en"] if country else ""
-        if system_key == "china":
+        if forced_query:
+            query = forced_query
+        elif system_key == "china":
             query = topic
         elif system_key == "islamic":
             # 伊斯兰库国家过滤认英文名 / ISO；中文提问需带上英文锚点
@@ -222,23 +274,34 @@ def resolve_legal_systems(question: str) -> str:
         for country in countries:
             code = country["country"]
             for system_key in _COUNTRY_BASE_SYSTEMS.get(code, ["china"]):
-                add_system(system_key, country, _reason_for(system_key, country, islamic_topic))
+                reason = _reason_for(system_key, country, islamic_topic)
+                if bound:
+                    reason = f"语义网关硬锚点绑定法域 {code}；{reason}"
+                add_system(system_key, country, reason)
             # 印尼：银行/金融/清真等主题额外查伊斯兰库
             if code == "ID" and islamic_topic:
                 add_system("islamic", country, _reason_for("islamic", country, True))
             # 马来西亚提问若只谈普通商事且未触伊斯兰主题，仍查伊斯兰库（该库覆盖 MY 合规）
             # 已在 base systems
 
+    notes = [
+        "对 systems 中每一项分别调用 search_article，传入对应 jurisdiction 与 suggested_query。",
+        "印尼制定法与伊斯兰金融分属两库，不可只查其一就下结论。",
+        "不填 jurisdiction 只会查中国法。",
+    ]
+    if bound or forced_query:
+        notes.insert(
+            0,
+            "本轮存在语义网关硬锚点：suggested_query / 检索 text 必须以锚点强制检索查询为准，法域不得偏离绑定国家。",
+        )
+
     plan = {
         "success": True,
         "question": text,
         "countries": countries,
         "systems": systems,
-        "notes": [
-            "对 systems 中每一项分别调用 search_article，传入对应 jurisdiction 与 suggested_query。",
-            "印尼制定法与伊斯兰金融分属两库，不可只查其一就下结论。",
-            "不填 jurisdiction 只会查中国法。",
-        ],
+        "notes": notes,
+        "gateway_hard_anchor": bool(bound or forced_query),
     }
     return json.dumps(plan, ensure_ascii=False)
 
@@ -341,6 +404,50 @@ def _fuzzy(system: str, text: str) -> str:
     )
 
 
+def _hybrid_search_article(system: str, text: str) -> str | None:
+    """混合检索成功时返回兼容协议 JSON；未启用或失败返回 None 以走旧路径。"""
+    try:
+        from vector_store.retrieval import (
+            format_hybrid_result_text,
+            hybrid_enabled,
+            hybrid_search,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hybrid import failed system=%s: %s", system, exc)
+        return None
+    if not hybrid_enabled():
+        return None
+    try:
+        result = hybrid_search(text or "", jurisdiction_system=system)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hybrid search failed system=%s: %s", system, exc)
+        return None
+    items = result.get("items") or []
+    if not items:
+        degraded = result.get("degraded") or []
+        logger.info(
+            "hybrid empty system=%s channels=%s degraded=%s",
+            system,
+            result.get("channel_counts"),
+            degraded,
+        )
+        return None
+    if result.get("degraded"):
+        logger.info(
+            "hybrid degraded system=%s channels=%s degraded=%s",
+            system,
+            result.get("channel_counts"),
+            result.get("degraded"),
+        )
+    payload: dict[str, Any] = {
+        "success": True,
+        "result": format_hybrid_result_text(items),
+    }
+    if system != "china":
+        payload["jurisdiction"] = system
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _link(system: str, message: str) -> str:
     if system == "civil":
         from RAG.civil_law import link_search
@@ -358,7 +465,11 @@ def _link(system: str, message: str) -> str:
 
 
 def get_article(title: str, number: str, jurisdiction: str = "") -> str:
-    """按法域精确取一条法条。不填法域时走中国法主库。"""
+    """按法域精确取一条法条。不填法域时走中国法主库。
+
+    本轮若绑定语义网关硬锚点法域，则强制覆盖 jurisdiction 参数。
+    """
+    jurisdiction = _gateway_forced_jurisdiction_arg(jurisdiction)
     return _call(
         jurisdiction,
         lambda: china_get_article(title, number),
@@ -367,16 +478,33 @@ def get_article(title: str, number: str, jurisdiction: str = "") -> str:
 
 
 def search_article(text: str, jurisdiction: str = "") -> str:
-    """按法域做关键词检索。不填法域时走中国法主库。"""
-    return _call(
-        jurisdiction,
-        lambda: china_search_article(text),
-        lambda: _fuzzy(resolve_jurisdiction(jurisdiction), text or ""),
-    )
+    """按法域做关键词检索。不填法域时走中国法主库。
+
+    本轮若绑定语义网关硬锚点，则强制使用 aligned_query，并覆盖 jurisdiction。
+    当 LAWVER_VECTOR_RETRIEVAL_ENABLED=1 时走混合检索，失败则降级旧路径。
+    """
+    text = _gateway_forced_query(text or "")
+    jurisdiction = _gateway_forced_jurisdiction_arg(jurisdiction)
+
+    def china_path() -> str:
+        hybrid = _hybrid_search_article("china", text)
+        return hybrid if hybrid is not None else china_search_article(text)
+
+    def other_path() -> str:
+        system = resolve_jurisdiction(jurisdiction)
+        hybrid = _hybrid_search_article(system, text or "")
+        return hybrid if hybrid is not None else _fuzzy(system, text or "")
+
+    return _call(jurisdiction, china_path, other_path)
 
 
 def get_linked_content(message: str, jurisdiction: str = "") -> str:
-    """按法域抽取可引用信源。不填法域时走中国法主库。"""
+    """按法域抽取可引用信源。不填法域时走中国法主库。
+
+    本轮若绑定语义网关硬锚点，则强制使用 aligned_query，并覆盖 jurisdiction。
+    """
+    message = _gateway_forced_query(message or "")
+    jurisdiction = _gateway_forced_jurisdiction_arg(jurisdiction)
     return _call(
         jurisdiction,
         lambda: china_get_linked_content(message),
