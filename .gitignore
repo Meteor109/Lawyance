@@ -15,6 +15,9 @@ TEMP
 Result
 /data/
 .DS_Store
+# 法律向量索引本地产物（Qdrant storage / BM25 / manifest）
+data/vector_index/
+qdrant_storage/
 RAG/cache/
 RAG/islamic_law/cache/
 RAG/data_doc/
