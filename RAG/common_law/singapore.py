@@ -7,6 +7,7 @@ protocol.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -16,14 +17,20 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_PATH = (
+    PACKAGE_DIR / "data" / "SG" / "corpus"
+    if (PACKAGE_DIR / "data" / "SG" / "corpus" / "manifest.json").exists()
+    or list((PACKAGE_DIR / "data" / "SG" / "corpus").glob("*.jsonl.gz"))
+    else PACKAGE_DIR / "data" / "SG" / "official_seed.json"
+)
 DATA_PATH = Path(
     os.environ.get(
         "SINGAPORE_LAW_DATA_PATH",
-        str(PACKAGE_DIR / "data" / "SG" / "official_seed.json"),
+        str(DEFAULT_DATA_PATH),
     )
 )
 CACHE_DIR = Path(
@@ -33,8 +40,8 @@ CACHE_DIR = Path(
     )
 )
 DB_PATH = CACHE_DIR / "singapore_law.db"
-MANIFEST_PATH = CACHE_DIR / "manifest.json"
-SCHEMA_VERSION = "1.0.0"
+MANIFEST_PATH = CACHE_DIR / "singapore_manifest.json"
+SCHEMA_VERSION = "1.1.0"
 
 _BUILD_LOCK = threading.RLock()
 _ENGINE_LOCK = threading.Lock()
@@ -78,21 +85,70 @@ def _clamp_limit(limit: int) -> int:
     return max(1, min(value, 20))
 
 
+def _source_files() -> List[Path]:
+    if DATA_PATH.is_dir():
+        paths = sorted(DATA_PATH.glob("*.jsonl.gz"))
+        if not paths:
+            raise ValueError(f"No corpus shards found: {DATA_PATH}")
+        manifest_path = DATA_PATH / "manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            expected = sorted(item["file"] for item in manifest["shards"])
+            if [path.name for path in paths] != expected:
+                raise ValueError("Corpus shard list does not match manifest")
+        return paths
+    return [DATA_PATH]
+
+
 def _source_manifest() -> Dict[str, object]:
-    raw = DATA_PATH.read_bytes()
     digest = hashlib.sha256()
     digest.update(SCHEMA_VERSION.encode("utf-8"))
     digest.update(b"\0")
-    digest.update(raw)
-    records = json.loads(raw.decode("utf-8"))
-    if not isinstance(records, list):
-        raise ValueError("official_seed.json must contain a JSON array")
+    delivery = None
+    if DATA_PATH.is_dir() and (DATA_PATH / "manifest.json").exists():
+        delivery = json.loads((DATA_PATH / "manifest.json").read_text(encoding="utf-8"))
+    expected_hashes = {item["file"]: item["sha256"] for item in delivery["shards"]} if delivery else {}
+    for path in _source_files():
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        file_digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+                file_digest.update(block)
+        if expected_hashes and file_digest.hexdigest() != expected_hashes[path.name]:
+            raise ValueError(f"Corpus shard SHA-256 mismatch: {path.name}")
+    record_count = sum(1 for _ in _iter_source_records())
+    if delivery and record_count != delivery["record_count"]:
+        raise ValueError("Corpus record count does not match manifest")
     return {
         "schema_version": SCHEMA_VERSION,
         "content_sha256": digest.hexdigest(),
-        "record_count": len(records),
+        "record_count": record_count,
         "data_path": str(DATA_PATH),
     }
+
+
+def _iter_source_records() -> Iterable[Dict[str, Any]]:
+    for path in _source_files():
+        if path.name.endswith((".jsonl", ".jsonl.gz")):
+            opener = gzip.open if path.suffix == ".gz" else open
+            with opener(path, "rt", encoding="utf-8") as stream:
+                for line_number, line in enumerate(stream, 1):
+                    if not line.strip():
+                        continue
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError(f"{path.name} line {line_number} must be a JSON object")
+                    yield value
+        else:
+            values = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(values, list):
+                raise ValueError(f"{path.name} must contain a JSON array")
+            for index, value in enumerate(values):
+                if not isinstance(value, dict):
+                    raise ValueError(f"source record {index} must be a JSON object")
+                yield value
 
 
 def _read_cached_manifest() -> Optional[Dict[str, object]]:
@@ -109,14 +165,14 @@ def _validate_record(record: Dict[str, Any], index: int) -> None:
     required = ("rule_id", "law_name", "article_number", "content", "url")
     missing = [key for key in required if key not in record]
     if missing:
-        raise ValueError(f"seed record {index} is missing fields: {', '.join(missing)}")
+        raise ValueError(f"source record {index} is missing fields: {', '.join(missing)}")
     for key in ("rule_id", "law_name", "article_number", "content"):
         if not str(record.get(key, "")).strip():
-            raise ValueError(f"seed record {index} has an empty {key}")
+            raise ValueError(f"source record {index} has an empty {key}")
     if record.get("language") != "en":
-        raise ValueError(f"seed record {index} must identify authoritative language as en")
+        raise ValueError(f"source record {index} must identify authoritative language as en")
     if record.get("legal_system") != "common":
-        raise ValueError(f"seed record {index} must identify legal_system as common")
+        raise ValueError(f"source record {index} must identify legal_system as common")
 
 
 def _search_blob(record: Dict[str, Any]) -> str:
@@ -133,7 +189,7 @@ def _search_blob(record: Dict[str, Any]) -> str:
     return "\n".join(str(record.get(key, "")) for key in fields)
 
 
-def _build_database(records: Sequence[Dict[str, Any]], destination: Path) -> None:
+def _build_database(records: Iterable[Dict[str, Any]], destination: Path) -> int:
     if destination.exists():
         destination.unlink()
     conn = sqlite3.connect(destination)
@@ -189,9 +245,36 @@ def _build_database(records: Sequence[Dict[str, Any]], destination: Path) -> Non
 
         rows = []
         fts_rows = []
+        record_count = 0
+
+        def flush() -> None:
+            if not rows:
+                return
+            conn.executemany(
+                """
+                INSERT INTO records (
+                    rule_id, law_name, normalized_law_name, article_number,
+                    normalized_article_number, content, url, topic_zh,
+                    citation, year, status, search_blob, normalized_search_blob,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            if fts_enabled:
+                conn.executemany(
+                    """
+                    INSERT INTO records_fts (
+                        rule_id, law_name, article_number, article_title,
+                        content, topic_zh, citation
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    fts_rows,
+                )
+            rows.clear()
+            fts_rows.clear()
+
         for index, raw in enumerate(records):
-            if not isinstance(raw, dict):
-                raise ValueError(f"seed record {index} must be a JSON object")
             record = dict(raw)
             _validate_record(record, index)
             blob = _search_blob(record)
@@ -224,37 +307,20 @@ def _build_database(records: Sequence[Dict[str, Any]], destination: Path) -> Non
                     str(record.get("citation", "")),
                 )
             )
-
-        conn.executemany(
-            """
-            INSERT INTO records (
-                rule_id, law_name, normalized_law_name, article_number,
-                normalized_article_number, content, url, topic_zh,
-                citation, year, status, search_blob, normalized_search_blob,
-                payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        if fts_enabled:
-            conn.executemany(
-                """
-                INSERT INTO records_fts (
-                    rule_id, law_name, article_number, article_title,
-                    content, topic_zh, citation
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                fts_rows,
-            )
+            record_count += 1
+            if len(rows) >= 500:
+                flush()
+        flush()
         conn.executemany(
             "INSERT INTO metadata(key, value) VALUES (?, ?)",
             (
                 ("schema_version", SCHEMA_VERSION),
                 ("fts_enabled", "1" if fts_enabled else "0"),
-                ("record_count", str(len(rows))),
+                ("record_count", str(record_count)),
             ),
         )
         conn.commit()
+        return record_count
     finally:
         conn.close()
 
@@ -284,10 +350,14 @@ def ensure_singapore_law_database_ready(
                 "record_count": source["record_count"],
             }
 
-        records = json.loads(DATA_PATH.read_text(encoding="utf-8"))
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         temp_db = CACHE_DIR / "singapore_law.tmp.db"
-        _build_database(records, temp_db)
+        built_record_count = _build_database(_iter_source_records(), temp_db)
+        if built_record_count != source["record_count"]:
+            raise ValueError(
+                f"source count changed during build: expected {source['record_count']}, "
+                f"built {built_record_count}"
+            )
         for suffix in ("", "-wal", "-shm"):
             current = Path(f"{DB_PATH}{suffix}")
             if current.exists():

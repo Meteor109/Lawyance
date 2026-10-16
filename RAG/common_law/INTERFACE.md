@@ -43,6 +43,6 @@ from RAG.common_law import (
 |---|---|
 | `country` | `MM` / `SG` |
 | `legal_system` | `common` |
-| `language` | 缅甸语料为 `my` / `en` / `my+en`；新加坡种子为 `en` |
+| `language` | 缅甸语料为 `my` / `en` / `my+en`；新加坡语料为 `en` |
 
 新加坡正文以英文为准，中文只用于召回，不能当成官方译本。缅甸正文是信息部来源的机器抽取文本，未人工核验的条目带 `review_required`。

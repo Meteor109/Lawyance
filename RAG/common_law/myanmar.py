@@ -21,7 +21,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 DATA_DIR = PACKAGE_DIR / "data" / "MM"
 CACHE_DIR = PACKAGE_DIR / "cache"
 DB_PATH = CACHE_DIR / "myanmar_law.db"
-MANIFEST_PATH = CACHE_DIR / "manifest.json"
+MANIFEST_PATH = CACHE_DIR / "myanmar_manifest.json"
 SCHEMA_VERSION = 1
 MAX_LIMIT = 20
 MAX_QUERY_CHARS = 4000
@@ -180,7 +180,7 @@ class MyanmarLawSearchEngine:
         self.data_dir = Path(data_dir or DATA_DIR)
         self.cache_dir = Path(cache_dir or CACHE_DIR)
         self.db_path = self.cache_dir / "myanmar_law.db"
-        self.manifest_path = self.cache_dir / "manifest.json"
+        self.manifest_path = self.cache_dir / "myanmar_manifest.json"
         self.ensure_ready()
 
     def ensure_ready(self, *, force_rebuild: bool = False) -> dict[str, Any]:

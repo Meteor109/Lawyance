@@ -1,0 +1,79 @@
+{
+  "record_count": 57826,
+  "source_jsonl_sha256": "7b5e2c19ed5a49623cb593d858a486110196050c3f5fc7fac983cfab7c6650ef",
+  "format": "gzip JSONL; sorted part filenames",
+  "shards": [
+    {
+      "file": "part-001.jsonl.gz",
+      "records": 5000,
+      "bytes": 12548495,
+      "sha256": "af7dcab06e0dd0f4bcaf324da91a55e0dd09325ae4f983f2af80a7a26009e483"
+    },
+    {
+      "file": "part-002.jsonl.gz",
+      "records": 5000,
+      "bytes": 12928015,
+      "sha256": "08c71e8e45b7a355d657e87e3adb96a3a6ab89b70c834601b8f1f5d8257f122c"
+    },
+    {
+      "file": "part-003.jsonl.gz",
+      "records": 5000,
+      "bytes": 9821054,
+      "sha256": "699e660518ff4627dd51e9e6d4b9101b0baa813dc96adc26f6f035af68980213"
+    },
+    {
+      "file": "part-004.jsonl.gz",
+      "records": 5000,
+      "bytes": 6889348,
+      "sha256": "455bee57018df0434eadd0cc2d7a1c6961619fd45faa10ff7c102413b5b3747b"
+    },
+    {
+      "file": "part-005.jsonl.gz",
+      "records": 5000,
+      "bytes": 6426840,
+      "sha256": "79785d30ee80f278b49609ea378e3049307fb80c7a433187ef1b67bbd2e58d49"
+    },
+    {
+      "file": "part-006.jsonl.gz",
+      "records": 5000,
+      "bytes": 6514143,
+      "sha256": "75c431890c0008dcdbf42f9f36d207630ac600a58f8a3ef284d5df6a5ce3953c"
+    },
+    {
+      "file": "part-007.jsonl.gz",
+      "records": 5000,
+      "bytes": 6999745,
+      "sha256": "84a2ddf9b0ccce9204877f6dd01492066f7f84c9bf87cfc03aef5bd97c71230f"
+    },
+    {
+      "file": "part-008.jsonl.gz",
+      "records": 5000,
+      "bytes": 6899492,
+      "sha256": "08a9e8cf412b099a4e0ca5da99e2207c9a7ec596c6fbc243cf5482351b292b56"
+    },
+    {
+      "file": "part-009.jsonl.gz",
+      "records": 5000,
+      "bytes": 8055323,
+      "sha256": "63fbcccbdcac8fc6d9158730c91c81df20a1201424eeeeb927ba3add60f21add"
+    },
+    {
+      "file": "part-010.jsonl.gz",
+      "records": 5000,
+      "bytes": 13454157,
+      "sha256": "4480332f11daf4978d2c000d02d519ac12a533535354c76a982c74d2a8cf5c10"
+    },
+    {
+      "file": "part-011.jsonl.gz",
+      "records": 5000,
+      "bytes": 12237407,
+      "sha256": "8d639bee32185538e24f15ce45277ac094699df79e9b1f868838ee6941ed5ed8"
+    },
+    {
+      "file": "part-012.jsonl.gz",
+      "records": 2826,
+      "bytes": 5307616,
+      "sha256": "44aa0bd44e3aa114c39e1d0e834cca417cf37815164ae1fe85220c1f1acbbc80"
+    }
+  ]
+}

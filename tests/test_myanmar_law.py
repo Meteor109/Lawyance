@@ -47,6 +47,22 @@ def test_ready_reuses_content_fingerprint(tmp_path):
     assert result["entry_count"] == 1
 
 
+def test_shared_cache_keeps_both_country_manifests(tmp_path, monkeypatch):
+    from RAG.common_law import singapore
+    from pathlib import Path
+    engine = _engine(tmp_path)
+    cache = engine.cache_dir
+    monkeypatch.setattr(singapore, "DATA_PATH", Path("RAG/common_law/data/SG/official_seed.json"))
+    monkeypatch.setattr(singapore, "CACHE_DIR", cache)
+    monkeypatch.setattr(singapore, "DB_PATH", cache / "singapore_law.db")
+    monkeypatch.setattr(singapore, "MANIFEST_PATH", cache / "singapore_manifest.json")
+    singapore.ensure_singapore_law_database_ready()
+    assert engine.ensure_ready()["mode"] == "reuse"
+    assert singapore.ensure_singapore_law_database_ready()["mode"] == "unchanged"
+    assert (cache / "myanmar_manifest.json").exists()
+    assert (cache / "singapore_manifest.json").exists()
+
+
 def test_exact_fuzzy_and_link_envelopes(tmp_path):
     engine = _engine(tmp_path)
     exact = json.loads(engine.exact_search("Sample Myanmar Law", "Section 1"))
